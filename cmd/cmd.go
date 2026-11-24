@@ -84,6 +84,10 @@ func (cli Cli) Run(args []string) int {
 		inNull      nilString
 		inRowNumber bool
 
+		inYAMLDoc     bool
+		inYAMLColumns string
+		inYAMLExtra   string
+
 		outFlag         outputFlag
 		outFile         string
 		outWithoutGuess bool
@@ -125,6 +129,10 @@ func (cli Cli) Run(args []string) int {
 	flags.StringVar(&inJQuery, "ijq", "", "jq expression string for input(JSON/JSONL only).")
 	flags.Var(&inNull, "inull", "value(string) to convert to null on input.")
 	flags.BoolVar(&inRowNumber, "inum", false, "add row number column.")
+
+	flags.BoolVar(&inYAMLDoc, "iyaml-doc", false, "YAML: add a document number column (\"doc\") identifying each row's source YAML document; empty documents still import an all-NULL row.")
+	flags.StringVar(&inYAMLColumns, "iyaml-columns", "", "YAML: comma-separated pre-declared column names. Fields outside the list are handled by -iyaml-extra; missing fields import NULL.")
+	flags.StringVar(&inYAMLExtra, "iyaml-extra", "error", "YAML: handling of fields outside -iyaml-columns. [ error | null | json ]")
 
 	flags.BoolVar(&inFlag.CSV, "icsv", false, "CSV format for input.")
 	flags.BoolVar(&inFlag.LTSV, "iltsv", false, "LTSV format for input.")
@@ -201,6 +209,11 @@ func (cli Cli) Run(args []string) int {
 		if inHeader && inPreRead == 1 {
 			inPreRead = 2
 		}
+		analyzeExtraMode, extraErr := yamlExtraMode(inYAMLExtra)
+		if extraErr != nil {
+			log.Printf("ERROR: %s", extraErr)
+			return 1
+		}
 		readOpts := trdsql.NewReadOpts(
 			trdsql.InFormat(inputFormat(inFlag)),
 			trdsql.InDelimiter(inDelimiter),
@@ -208,6 +221,9 @@ func (cli Cli) Run(args []string) int {
 			trdsql.InSkip(inSkip),
 			trdsql.InPreRead(inPreRead),
 			trdsql.InJQ(inJQuery),
+			trdsql.InYAMLDocument(inYAMLDoc),
+			trdsql.InYAMLColumns(yamlColumns(inYAMLColumns)...),
+			trdsql.InYAMLExtraMode(analyzeExtraMode),
 		)
 		if err = trdsql.Analyze(analyze, opts, readOpts); err != nil {
 			log.Printf("ERROR: %s", err)
@@ -241,6 +257,13 @@ func (cli Cli) Run(args []string) int {
 		}
 	}
 
+	var extraMode trdsql.YAMLExtraMode
+	extraMode, err = yamlExtraMode(inYAMLExtra)
+	if err != nil {
+		log.Printf("ERROR: %s", err)
+		return 1
+	}
+
 	importer := trdsql.NewImporter(
 		trdsql.InFormat(inputFormat(inFlag)),
 		trdsql.InDelimiter(inDelimiter),
@@ -252,6 +275,9 @@ func (cli Cli) Run(args []string) int {
 		trdsql.InNeedNULL(inNull.valid),
 		trdsql.InNULL(inNull.str),
 		trdsql.InRowNumber(inRowNumber),
+		trdsql.InYAMLDocument(inYAMLDoc),
+		trdsql.InYAMLColumns(yamlColumns(inYAMLColumns)...),
+		trdsql.InYAMLExtraMode(extraMode),
 	)
 
 	writer := cli.OutStream
@@ -539,6 +565,37 @@ func isInFormat(name string) bool {
 		return true
 	}
 	return false
+}
+
+// yamlColumns parses the comma-separated -iyaml-columns value into a
+// column list. An empty value means no pre-declared schema.
+func yamlColumns(columns string) []string {
+	if strings.TrimSpace(columns) == "" {
+		return nil
+	}
+	parts := strings.Split(columns, ",")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// yamlExtraMode maps the -iyaml-extra flag value to a trdsql mode.
+func yamlExtraMode(mode string) (trdsql.YAMLExtraMode, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "error":
+		return trdsql.YAMLExtraError, nil
+	case "null", "ignore":
+		return trdsql.YAMLExtraNull, nil
+	case "json":
+		return trdsql.YAMLExtraJSON, nil
+	default:
+		return trdsql.YAMLExtraError, fmt.Errorf("invalid -iyaml-extra value %q: expected error, null or json", mode)
+	}
 }
 
 // outputFlag represents the format of the output.

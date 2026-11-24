@@ -202,6 +202,9 @@ trdsql -o[output format] -t [input filename]
 * `-inum` add row number column.
 * `-ir` **int** number of rows to preread. (default 1)
 * `-is` **int** skip header row.
+* `-iyaml-doc` add a document number column (`doc`) identifying each row's source YAML document (YAML only).
+* `-iyaml-columns` **string** comma-separated pre-declared column names for YAML input.
+* `-iyaml-extra` **string** handling of YAML fields outside `-iyaml-columns`: `error` (default), `null` or `json`.
 
 ###  3.3. <a name='output-formats'></a>Output formats
 
@@ -752,6 +755,74 @@ $ trdsql -ojson "SELECT * FROM sample2.yaml::.b.e"
   value: 3
 - name: sam
   value: 4%
+```
+
+####  4.12.1. <a name='yaml-multi-document'></a>Multi-document YAML
+
+A YAML stream may contain several documents separated by `---`.
+Every document is imported in order, and an **empty document still
+produces one all-NULL row**, so the imported table can be reconciled
+against the registration file: the number of rows per document can
+always be accounted for.
+
+register.yaml
+
+```yaml
+id: 1
+name: Orange
+---
+---
+id: 2
+name: Melon
+price: "500"
+```
+
+```console
+$ trdsql -iyaml -ocsv "SELECT * FROM register.yaml"
+1,Orange,
+,,
+2,Melon,500
+```
+
+With `-iyaml-doc` each row carries a `doc` column with the 1-based
+index of the YAML document it originates from. If a data field is
+itself named `doc`, the identity column is renamed (`doc1`, `doc2`, ...).
+
+```console
+$ trdsql -iyaml -ocsv -iyaml-doc "SELECT doc, id, name FROM register.yaml ORDER BY doc"
+1,1,Orange
+2,,
+3,2,Melon
+
+$ trdsql -iyaml -ocsv -iyaml-doc \
+    "SELECT doc, count(*) FROM register.yaml GROUP BY doc ORDER BY doc"
+1,1
+2,1
+3,1
+```
+
+The column schema can be pre-declared with `-iyaml-columns`. Fields of
+later documents that are not part of the declaration are then handled
+according to `-iyaml-extra`:
+
+* `error` (default): abort with an error so schema drift is never silent.
+* `null`: discard undeclared fields; declared fields missing from a
+  document import NULL.
+* `json`: collect undeclared fields into an `extra` column as a JSON
+  object (the column is renamed to `extra1`, ... if `extra` is declared).
+
+```console
+$ trdsql -iyaml -ocsv -iyaml-columns id,name -iyaml-extra null \
+    "SELECT * FROM register.yaml"
+1,Orange
+,
+2,Melon
+
+$ trdsql -iyaml -ocsv -iyaml-columns id,name -iyaml-extra json \
+    "SELECT * FROM register.yaml"
+1,Orange,
+,,
+2,Melon,"{""price"":""500""}"
 ```
 
 ###  4.13. <a name='tbln'></a>TBLN

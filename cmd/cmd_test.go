@@ -11,6 +11,99 @@ import (
 	"github.com/noborus/trdsql"
 )
 
+func Test_yamlColumns(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  string
+		want []string
+	}{
+		{name: "empty", arg: "", want: nil},
+		{name: "whitespace", arg: "   ", want: nil},
+		{name: "single", arg: "id", want: []string{"id"}},
+		{name: "multiple", arg: "id,name,price", want: []string{"id", "name", "price"}},
+		{name: "spaces", arg: "id, name , price", want: []string{"id", "name", "price"}},
+		{name: "empty parts ignored", arg: "id,,name,", want: []string{"id", "name"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := yamlColumns(tt.arg); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("yamlColumns() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_yamlExtraMode(t *testing.T) {
+	tests := []struct {
+		arg     string
+		want    trdsql.YAMLExtraMode
+		wantErr bool
+	}{
+		{arg: "", want: trdsql.YAMLExtraError},
+		{arg: "error", want: trdsql.YAMLExtraError},
+		{arg: "ERROR", want: trdsql.YAMLExtraError},
+		{arg: "null", want: trdsql.YAMLExtraNull},
+		{arg: "ignore", want: trdsql.YAMLExtraNull},
+		{arg: "json", want: trdsql.YAMLExtraJSON},
+		{arg: "bogus", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.arg, func(t *testing.T) {
+			got, err := yamlExtraMode(tt.arg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("yamlExtraMode() err = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("yamlExtraMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCli_Run_YAMLDocumentFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{
+			name: "yamlDoc",
+			args: []string{"trdsql", "-iyaml-doc", "SELECT doc, id FROM " + filepath.Join("..", "testdata", "multidoc.yaml")},
+			want: 0,
+		},
+		{
+			name: "yamlColumnsExtraNull",
+			args: []string{"trdsql", "-iyaml-columns", "id,name", "-iyaml-extra", "null",
+				"SELECT id, name FROM " + filepath.Join("..", "testdata", "multidoc.yaml")},
+			want: 0,
+		},
+		{
+			name: "yamlColumnsExtraJSON",
+			args: []string{"trdsql", "-iyaml-columns", "id,name", "-iyaml-extra", "json",
+				"SELECT id FROM " + filepath.Join("..", "testdata", "multidoc.yaml")},
+			want: 0,
+		},
+		{
+			name: "yamlExtraInvalid",
+			args: []string{"trdsql", "-iyaml-extra", "bogus",
+				"SELECT id FROM " + filepath.Join("..", "testdata", "multidoc.yaml")},
+			want: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outStream, errStream := new(bytes.Buffer), new(bytes.Buffer)
+			cli := Cli{OutStream: outStream, ErrStream: errStream}
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			if got := cli.Run(tt.args); got != tt.want {
+				t.Errorf("Run() = %v, want %v (%s)", got, tt.want, buf.String())
+			}
+		})
+	}
+}
+
 func Test_inputFormat(t *testing.T) {
 	type args struct {
 		i inputFlag

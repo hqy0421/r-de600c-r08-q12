@@ -127,27 +127,66 @@ type ReadOpts struct {
 
 	// InRowNumber indicates whether to add a row number column.
 	InRowNumber bool
+
+	// InYAMLDocument indicates whether to add a document number
+	// column ("doc") when reading a multi-document YAML stream.
+	// Each row carries the 1-based index of the YAML document
+	// it originates from. Empty documents are still represented by
+	// an all-NULL row so the imported table can be reconciled
+	// against the registration file.
+	InYAMLDocument bool
+
+	// InYAMLColumns is the pre-declared column schema for YAML
+	// input. When empty, columns are inferred from the data as
+	// before. When declared, fields not listed here are handled
+	// according to InYAMLExtra, and a document missing a declared
+	// field imports NULL for that column.
+	InYAMLColumns []string
+
+	// InYAMLExtra decides how fields that are not part of the
+	// pre-declared InYAMLColumns are handled.
+	InYAMLExtra YAMLExtraMode
 }
 
 // NewReadOpts returns a ReadOpts.
 func NewReadOpts(options ...ReadOpt) *ReadOpts {
 	readOpts := &ReadOpts{
-		InFormat:    GUESS,
-		InPreRead:   1,
-		InLimitRead: false,
-		InSkip:      0,
-		InDelimiter: ",",
-		InHeader:    false,
-		IsTemporary: true,
-		InJQuery:    "",
-		InNeedNULL:  false,
-		InNULL:      "",
+		InFormat:      GUESS,
+		InPreRead:     1,
+		InLimitRead:   false,
+		InSkip:        0,
+		InDelimiter:   ",",
+		InHeader:      false,
+		IsTemporary:   true,
+		InJQuery:      "",
+		InNeedNULL:    false,
+		InNULL:        "",
+		InYAMLExtra:   YAMLExtraError,
+		InYAMLColumns: nil,
 	}
 	for _, option := range options {
 		option(readOpts)
 	}
 	return readOpts
 }
+
+// YAMLExtraMode controls how YAML fields outside the pre-declared
+// column schema (ReadOpts.InYAMLColumns) are handled.
+type YAMLExtraMode int
+
+const (
+	// YAMLExtraError returns an error when a document contains a
+	// field that is not part of the pre-declared columns. This is
+	// the default so that schema drift is never silent.
+	YAMLExtraError YAMLExtraMode = iota
+	// YAMLExtraNull discards undeclared fields; declared columns
+	// missing from a document import NULL.
+	YAMLExtraNull
+	// YAMLExtraJSON collects undeclared fields into an additional
+	// "extra" column as a JSON object. Rows without undeclared
+	// fields import NULL in that column.
+	YAMLExtraJSON
+)
 
 // ReadOpt is a functional option for ReadOpts.
 type ReadOpt func(*ReadOpts)
@@ -224,6 +263,31 @@ func IsTemporary(t bool) ReadOpt {
 func InRowNumber(t bool) ReadOpt {
 	return func(args *ReadOpts) {
 		args.InRowNumber = t
+	}
+}
+
+// InYAMLDocument sets whether YAML input gets a document number
+// column ("doc") identifying the source YAML document of each row.
+func InYAMLDocument(t bool) ReadOpt {
+	return func(args *ReadOpts) {
+		args.InYAMLDocument = t
+	}
+}
+
+// InYAMLColumns pre-declares the column schema for YAML input.
+// Fields outside the declared columns are handled according to
+// the mode set by InYAMLExtraMode.
+func InYAMLColumns(columns ...string) ReadOpt {
+	return func(args *ReadOpts) {
+		args.InYAMLColumns = columns
+	}
+}
+
+// InYAMLExtraMode sets the handling of fields outside the
+// pre-declared YAML columns.
+func InYAMLExtraMode(mode YAMLExtraMode) ReadOpt {
+	return func(args *ReadOpts) {
+		args.InYAMLExtra = mode
 	}
 }
 
